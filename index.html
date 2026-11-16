@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>UAH · USD · EUR converter</title>
+<style>
+:root{
+  --bg:#f3f6fb; --card:#ffffff; --ink:#14284b; --muted:#5d6b85; --line:#d5deec;
+  --blue:#1d4fa3; --sun:#ffd23f; --sun-ink:#4a3800; --err:#b3261e;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#0e1626; --card:#16213a; --ink:#eaf0fb; --muted:#9aa9c6; --line:#2a3858;
+    --blue:#7fa8ee; --sun:#ffd23f; --sun-ink:#2b2100; --err:#ff8a80;
+    color-scheme: dark;
+  }
+}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{
+  background:var(--bg); color:var(--ink);
+  font:16px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  min-height:100vh; display:grid; place-items:center; padding:20px;
+}
+main{width:100%; max-width:440px}
+h1{font-size:1.35rem; margin:0 0 4px; letter-spacing:-.01em}
+.sub{margin:0 0 20px; color:var(--muted); font-size:.9rem}
+.card{background:var(--card); border:1px solid var(--line); border-radius:16px; padding:20px}
+label{display:block; font-size:.85rem; color:var(--muted); margin-bottom:6px}
+.row{display:flex; gap:10px}
+input,select{
+  font:inherit; color:var(--ink); background:var(--bg);
+  border:1px solid var(--line); border-radius:10px; padding:12px;
+}
+input{flex:1; min-width:0; font-size:1.25rem; font-variant-numeric:tabular-nums}
+select{width:110px}
+input:focus-visible,select:focus-visible,button:focus-visible{outline:3px solid var(--blue); outline-offset:2px}
+.swap{display:flex; justify-content:center; margin:14px 0}
+.swap button{
+  border:1px solid var(--line); background:var(--card); color:var(--ink);
+  border-radius:999px; padding:8px 16px; font:inherit; font-size:.9rem; cursor:pointer;
+}
+.swap button:hover{border-color:var(--blue)}
+.result{
+  background:var(--sun); color:var(--sun-ink); border-radius:12px;
+  padding:16px; margin-top:18px;
+}
+.result small{display:block; opacity:.8}
+.result strong{font-size:2rem; line-height:1.2; font-variant-numeric:tabular-nums; word-break:break-all}
+.rates{margin:18px 0 0; padding:0; list-style:none; font-size:.9rem; color:var(--muted); font-variant-numeric:tabular-nums}
+.rates li{display:flex; justify-content:space-between; padding:6px 0; border-top:1px solid var(--line)}
+.status{margin:14px 0 0; font-size:.8rem; color:var(--muted)}
+.status.error{color:var(--err)}
+.status button{font:inherit; color:var(--blue); background:none; border:0; padding:0; text-decoration:underline; cursor:pointer}
+</style>
+</head>
+<body>
+<main>
+  <h1>Currency converter</h1>
+  <p class="sub">Hryvnia, dollar and euro at the official National Bank of Ukraine rate.</p>
+
+  <div class="card">
+    <label for="amount">Amount</label>
+    <div class="row">
+      <input id="amount" type="number" inputmode="decimal" min="0" step="any" value="100">
+      <select id="from" aria-label="From currency">
+        <option>USD</option><option>EUR</option><option>UAH</option>
+      </select>
+    </div>
+
+    <div class="swap"><button id="swap" type="button">Swap currencies</button></div>
+
+    <label for="to">Convert to</label>
+    <select id="to" style="width:100%">
+      <option>UAH</option><option>USD</option><option>EUR</option>
+    </select>
+
+    <div class="result" aria-live="polite">
+      <small id="line">Loading rates…</small>
+      <strong id="out">–</strong>
+    </div>
+
+    <ul class="rates" id="rates"></ul>
+    <p class="status" id="status"></p>
+  </div>
+</main>
+
+<script>
+const API = "https://bank.gov.ua/NBUStatService/v1/statdirectory/exchange?json";
+const KEY = "nbu-rates-v1";
+let rates = { UAH: 1 };   // value = how many UAH one unit costs
+let rateDate = "";
+
+const $ = id => document.getElementById(id);
+const fmt = (n, d = 2) => new Intl.NumberFormat("en-US", { minimumFractionDigits: d, maximumFractionDigits: d }).format(n);
+
+function render() {
+  const amount = parseFloat($("amount").value);
+  const from = $("from").value, to = $("to").value;
+  if (!rates.USD || !rates.EUR) { return; }
+  if (isNaN(amount)) { $("out").textContent = "–"; $("line").textContent = "Enter an amount"; return; }
+  const result = amount * rates[from] / rates[to];
+  $("line").textContent = `${fmt(amount)} ${from} =`;
+  $("out").textContent = `${fmt(result)} ${to}`;
+  $("rates").innerHTML =
+    `<li><span>1 USD</span><span>${fmt(rates.USD, 4)} UAH</span></li>` +
+    `<li><span>1 EUR</span><span>${fmt(rates.EUR, 4)} UAH</span></li>`;
+}
+
+function setStatus(text, isError, withRetry) {
+  const el = $("status");
+  el.className = "status" + (isError ? " error" : "");
+  el.textContent = text + " ";
+  if (withRetry) {
+    const b = document.createElement("button");
+    b.type = "button"; b.textContent = "Try again";
+    b.onclick = load;
+    el.appendChild(b);
+  }
+}
+
+async function load() {
+  setStatus("Updating rates…", false, false);
+  try {
+    const res = await fetch(API);
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const data = await res.json();
+    const usd = data.find(r => r.cc === "USD"), eur = data.find(r => r.cc === "EUR");
+    if (!usd || !eur) throw new Error("Rates missing");
+    rates = { UAH: 1, USD: usd.rate, EUR: eur.rate };
+    rateDate = usd.exchangedate;
+    try { localStorage.setItem(KEY, JSON.stringify({ rates, rateDate })); } catch (e) {}
+    setStatus(`NBU official rate for ${rateDate}.`, false, false);
+  } catch (e) {
+    let saved = null;
+    try { saved = JSON.parse(localStorage.getItem(KEY)); } catch (e2) {}
+    if (saved && saved.rates) {
+      rates = saved.rates; rateDate = saved.rateDate;
+      setStatus(`Couldn’t reach the bank. Showing saved rates from ${rateDate}.`, true, true);
+    } else {
+      $("line").textContent = "Rates unavailable";
+      setStatus("Couldn’t load rates. Check your connection.", true, true);
+    }
+  }
+  render();
+}
+
+["amount", "from", "to"].forEach(id => $(id).addEventListener("input", render));
+$("swap").addEventListener("click", () => {
+  const f = $("from").value; $("from").value = $("to").value; $("to").value = f;
+  render();
+});
+load();
+</script>
+</body>
+</html>
