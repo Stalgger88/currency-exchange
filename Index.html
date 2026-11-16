@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>UAH · USD · EUR converter</title>
+<style>
+:root{
+  --bg:#f3f6fb; --card:#ffffff; --ink:#14284b; --muted:#5d6b85; --line:#d5deec;
+  --blue:#1d4fa3; --sun:#ffd23f; --sun-ink:#4a3800; --err:#b3261e;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#0e1626; --card:#16213a; --ink:#eaf0fb; --muted:#9aa9c6; --line:#2a3858;
+    --blue:#7fa8ee; --sun:#ffd23f; --sun-ink:#2b2100; --err:#ff8a80;
+    color-scheme: dark;
+  }
+}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{
+  background:var(--bg); color:var(--ink);
+  font:16px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  min-height:100vh; padding:20px; overflow-x:hidden;
+  -webkit-text-size-adjust:100%;
+}
+main{width:100%; max-width:440px; margin:0 auto; padding-top:4vh}
+h1{font-size:1.35rem; margin:0 0 4px; letter-spacing:-.01em}
+.sub{margin:0 0 20px; color:var(--muted); font-size:.9rem}
+.card{background:var(--card); border:1px solid var(--line); border-radius:16px; padding:20px}
+label{display:block; font-size:.85rem; color:var(--muted); margin-bottom:6px}
+.row{display:flex; gap:10px}
+input,select{
+  font:inherit; color:var(--ink); background:var(--bg);
+  border:1px solid var(--line); border-radius:10px; padding:12px;
+}
+input{flex:1; min-width:0; font-size:1.25rem; font-variant-numeric:tabular-nums}
+select{width:110px}
+input:focus-visible,select:focus-visible,button:focus-visible{outline:3px solid var(--blue); outline-offset:2px}
+.swap{display:flex; justify-content:center; margin:14px 0}
+.swap button{
+  border:1px solid var(--line); background:var(--card); color:var(--ink);
+  border-radius:999px; padding:8px 16px; font:inherit; font-size:.9rem; cursor:pointer;
+}
+.swap button:hover{border-color:var(--blue)}
+.result{
+  background:var(--sun); color:var(--sun-ink); border-radius:12px;
+  padding:16px; margin-top:18px;
+}
+.result small{display:block; opacity:.8}
+.result strong{font-size:2rem; line-height:1.2; font-variant-numeric:tabular-nums; word-break:break-all}
+.rates{margin:18px 0 0; padding:0; list-style:none; font-size:.9rem; color:var(--muted); font-variant-numeric:tabular-nums}
+.rates li{display:flex; justify-content:space-between; padding:6px 0; border-top:1px solid var(--line)}
+.status{margin:14px 0 0; font-size:.8rem; color:var(--muted)}
+.status.error{color:var(--err)}
+.status button{font:inherit; color:var(--blue); background:none; border:0; padding:0; text-decoration:underline; cursor:pointer}
+.chartcard{margin-top:16px}
+.chartcard h2{font-size:1rem; margin:0 0 12px}
+.ranges{display:flex; gap:6px; margin-bottom:12px}
+.ranges button{
+  flex:1; font:inherit; font-size:.85rem; color:var(--ink); background:var(--bg);
+  border:1px solid var(--line); border-radius:8px; padding:8px 0; cursor:pointer;
+}
+.ranges button[aria-pressed="true"]{background:var(--blue); border-color:var(--blue); color:var(--card)}
+.ranges button:focus-visible{outline:3px solid var(--blue); outline-offset:2px}
+#chart svg{width:100%; height:auto; display:block; touch-action:pan-y}
+.chartinfo{font-size:.85rem; color:var(--muted); margin-top:10px; min-height:2.6em; font-variant-numeric:tabular-nums}
+.chartinfo button{font:inherit; color:var(--blue); background:none; border:0; padding:0; text-decoration:underline; cursor:pointer}
+.stats{display:flex; justify-content:space-between; gap:8px}
+.stats b{display:block; color:var(--ink); font-weight:600}
+</style>
+</head>
+<body>
+<main>
+  <h1>Currency converter</h1>
+  <p class="sub">Hryvnia, dollar and euro at the official National Bank of Ukraine rate.</p>
+
+  <div class="card">
+    <label for="amount">Amount</label>
+    <div class="row">
+      <input id="amount" type="number" inputmode="decimal" min="0" step="any" value="100">
+      <select id="from" aria-label="From currency">
+        <option>USD</option><option>EUR</option><option>UAH</option>
+      </select>
+    </div>
+
+    <div class="swap"><button id="swap" type="button">Swap currencies</button></div>
+
+    <label for="to">Convert to</label>
+    <select id="to" style="width:100%">
+      <option>UAH</option><option>USD</option><option>EUR</option>
+    </select>
+
+    <div class="result" aria-live="polite">
+      <small id="line">Loading rates…</small>
+      <strong id="out">–</strong>
+    </div>
+
+    <ul class="rates" id="rates"></ul>
+    <p class="status" id="status"></p>
+  </div>
+
+  <div class="card chartcard">
+    <h2 id="chartTitle">Rate history</h2>
+    <div class="ranges" role="group" aria-label="Time range">
+      <button type="button" data-r="1W" aria-label="One week">1W</button>
+      <button type="button" data-r="1M" aria-label="One month">1M</button>
+      <button type="button" data-r="3M" aria-label="Three months">3M</button>
+      <button type="button" data-r="6M" aria-label="Six months">6M</button>
+      <button type="button" data-r="1Y" aria-label="One year">1Y</button>
+    </div>
+    <div id="chart"></div>
+    <div class="chartinfo" id="chartInfo" aria-live="polite"></div>
+  </div>
+</main>
+
+<script>
+const API = "https://bank.gov.ua/NBUStatService/v1/statdirectory/exchange?json";
+const KEY = "nbu-rates-v1";
+let rates = { UAH: 1 };   // value = how many UAH one unit costs
+let rateDate = "";
+
+const $ = id => document.getElementById(id);
+const fmt = (n, d = 2) => new Intl.NumberFormat("en-US", { minimumFractionDigits: d, maximumFractionDigits: d }).format(n);
+
+function render() {
+  const amount = parseFloat($("amount").value);
+  const from = $("from").value, to = $("to").value;
+  if (!rates.USD || !rates.EUR) { return; }
+  if (isNaN(amount)) { $("out").textContent = "–"; $("line").textContent = "Enter an amount"; return; }
+  const result = amount * rates[from] / rates[to];
+  $("line").textContent = `${fmt(amount)} ${from} =`;
+  $("out").textContent = `${fmt(result)} ${to}`;
+  $("rates").innerHTML =
+    `<li><span>1 USD</span><span>${fmt(rates.USD, 4)} UAH</span></li>` +
+    `<li><span>1 EUR</span><span>${fmt(rates.EUR, 4)} UAH</span></li>`;
+}
+
+function setStatus(text, isError, withRetry) {
+  const el = $("status");
+  el.className = "status" + (isError ? " error" : "");
+  el.textContent = text + " ";
+  if (withRetry) {
+    const b = document.createElement("button");
+    b.type = "button"; b.textContent = "Try again";
+    b.onclick = load;
+    el.appendChild(b);
+  }
+}
+
+async function load() {
+  setStatus("Updating rates…", false, false);
+  try {
+    const res = await fetch(API);
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const data = await res.json();
+    const usd = data.find(r => r.cc === "USD"), eur = data.find(r => r.cc === "EUR");
+    if (!usd || !eur) throw new Error("Rates missing");
+    rates = { UAH: 1, USD: usd.rate, EUR: eur.rate };
+    rateDate = usd.exchangedate;
+    try { localStorage.setItem(KEY, JSON.stringify({ rates, rateDate })); } catch (e) {}
+    setStatus(`NBU official rate for ${rateDate}.`, false, false);
+  } catch (e) {
+    let saved = null;
+    try { saved = JSON.parse(localStorage.getItem(KEY)); } catch (e2) {}
+    if (saved && saved.rates) {
+      rates = saved.rates; rateDate = saved.rateDate;
+      setStatus(`Couldn’t reach the bank. Showing saved rates from ${rateDate}.`, true, true);
+    } else {
+      $("line").textContent = "Rates unavailable";
+      setStatus("Couldn’t load rates. Check your connection.", true, true);
+    }
+  }
+  render();
+}
+
+["amount", "from", "to"].forEach(id => $(id).addEventListener("input", render));
+$("swap").addEventListener("click", () => {
+  const f = $("from").value; $("from").value = $("to").value; $("to").value = f;
+  render(); renderChart();
+});
+["from", "to"].forEach(id => $(id).addEventListener("input", renderChart));
+
+/* ---------- Rate history ---------- */
+const RANGES = { "1W": 7, "1M": 30, "3M": 91, "6M": 182, "1Y": 365 };
+let range = "1M", hist = null, histState = "loading";
+
+const pad = n => String(n).padStart(2, "0");
+const ymd = d => `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}`;
+const parseD = s => { const [d, m, y] = s.split("."); return new Date(+y, +m - 1, +d); };
+const showD = d => d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+
+async function fetchSeries(code) {
+  const end = new Date(), start = new Date();
+  start.setDate(end.getDate() - 366);
+  const url = `https://bank.gov.ua/NBU_Exchange/exchange_site?start=${ymd(start)}&end=${ymd(end)}&valcode=${code.toLowerCase()}&sort=exchangedate&order=asc&json`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error("HTTP " + res.status);
+  const data = await res.json();
+  return data.map(r => ({ t: parseD(r.exchangedate), v: r.rate })).filter(p => p.v > 0);
+}
+
+async function loadHistory() {
+  histState = "loading"; renderChart();
+  try {
+    const [USD, EUR] = await Promise.all([fetchSeries("USD"), fetchSeries("EUR")]);
+    if (!USD.length || !EUR.length) throw new Error("No data");
+    hist = { USD, EUR }; histState = "ready";
+  } catch (e) { histState = "error"; }
+  renderChart();
+}
+
+function pairSeries() {
+  const from = $("from").value, to = $("to").value;
+  const toMap = c => c === "UAH" ? null : new Map(hist[c].map(p => [p.t.getTime(), p.v]));
+  const A = toMap(from), B = toMap(to);
+  const cutoff = new Date(); cutoff.setDate(cutoff.getDate() - RANGES[range]);
+  const out = [];
+  for (const p of hist.USD) {
+    if (p.t < cutoff) continue;
+    const k = p.t.getTime();
+    const a = A ? A.get(k) : 1, b = B ? B.get(k) : 1;
+    if (a && b) out.push({ t: p.t, v: a / b });
+  }
+  return out;
+}
+
+function renderChart() {
+  const box = $("chart"), info = $("chartInfo");
+  const from = $("from").value, to = $("to").value;
+  document.querySelectorAll(".ranges button").forEach(b =>
+    b.setAttribute("aria-pressed", b.dataset.r === range ? "true" : "false"));
+  $("chartTitle").textContent = from === to ? "Rate history" : `1 ${from} in ${to}`;
+  box.innerHTML = "";
+  if (from === to) { info.textContent = "Choose two different currencies to see their history."; return; }
+  if (histState === "loading") { info.textContent = "Loading history…"; return; }
+  if (histState === "error") {
+    info.textContent = "Couldn’t load history. ";
+    const b = document.createElement("button");
+    b.type = "button"; b.textContent = "Try again"; b.onclick = loadHistory;
+    info.appendChild(b); return;
+  }
+  const s = pairSeries();
+  if (s.length < 2) { info.textContent = "Not enough data for this period."; return; }
+
+  const W = 320, H = 150, P = 8, n = s.length;
+  const vs = s.map(p => p.v), min = Math.min(...vs), max = Math.max(...vs);
+  const span = (max - min) || max * 0.01;
+  const x = i => P + i * (W - 2 * P) / (n - 1);
+  const y = v => P + (H - 2 * P) * (1 - (v - min) / span);
+  const line = s.map((p, i) => `${i ? "L" : "M"}${x(i).toFixed(1)} ${y(p.v).toFixed(1)}`).join("");
+  const area = `${line}L${x(n - 1).toFixed(1)} ${H - P}L${x(0).toFixed(1)} ${H - P}Z`;
+  box.innerHTML =
+    `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Chart of 1 ${from} in ${to}">` +
+    `<path d="${area}" fill="var(--blue)" opacity=".13"/>` +
+    `<path d="${line}" fill="none" stroke="var(--blue)" stroke-width="2" stroke-linejoin="round"/>` +
+    `<line id="cur" y1="${P}" y2="${H - P}" stroke="var(--muted)" stroke-dasharray="3 3" visibility="hidden"/>` +
+    `<circle id="dot" r="4.5" fill="var(--blue)" stroke="var(--card)" stroke-width="2" visibility="hidden"/></svg>`;
+
+  const first = s[0].v, last = s[n - 1].v, pct = (last - first) / first * 100;
+  const summary =
+    `<div class="stats"><span>Change<b>${pct >= 0 ? "+" : ""}${fmt(pct)}%</b></span>` +
+    `<span>Low<b>${fmt(min, 4)}</b></span><span>High<b>${fmt(max, 4)}</b></span></div>`;
+  info.innerHTML = summary;
+
+  const svg = box.querySelector("svg"), cur = $("cur"), dot = $("dot");
+  const move = e => {
+    const r = svg.getBoundingClientRect();
+    const px = (e.clientX - r.left) / r.width * W;
+    const i = Math.max(0, Math.min(n - 1, Math.round((px - P) / (W - 2 * P) * (n - 1))));
+    cur.setAttribute("x1", x(i)); cur.setAttribute("x2", x(i));
+    dot.setAttribute("cx", x(i)); dot.setAttribute("cy", y(s[i].v));
+    cur.setAttribute("visibility", "visible"); dot.setAttribute("visibility", "visible");
+    info.innerHTML = `${showD(s[i].t)}<b style="display:block;color:var(--ink);font-weight:600">${fmt(s[i].v, 4)} ${to}</b>`;
+  };
+  const leave = () => {
+    cur.setAttribute("visibility", "hidden"); dot.setAttribute("visibility", "hidden");
+    info.innerHTML = summary;
+  };
+  svg.addEventListener("pointermove", move);
+  svg.addEventListener("pointerdown", move);
+  svg.addEventListener("pointerleave", leave);
+  svg.addEventListener("pointerup", leave);
+}
+
+document.querySelectorAll(".ranges button").forEach(b =>
+  b.addEventListener("click", () => { range = b.dataset.r; renderChart(); }));
+
+load();
+loadHistory();
+</script>
+</body>
+</html>
