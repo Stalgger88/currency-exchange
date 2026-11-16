@@ -201,13 +201,54 @@ async function fetchSeries(code) {
   return data.map(r => ({ t: parseD(r.exchangedate), v: r.rate })).filter(p => p.v > 0);
 }
 
+/* Fallback: ask the bank for one date at a time (same endpoint as the live rates) */
+const STEP = { "1W": 1, "1M": 2, "3M": 7, "6M": 7, "1Y": 14 };
+let histMode = "bulk", histError = "";
+const dailyCache = {};
+
+async function fetchDay(code, d) {
+  const res = await fetch(`https://bank.gov.ua/NBUStatService/v1/statdirectory/exchange?valcode=${code}&date=${ymd(d)}&json`);
+  if (!res.ok) throw new Error("HTTP " + res.status);
+  const a = await res.json();
+  return a[0] && a[0].rate > 0 ? { t: d, v: a[0].rate } : null;
+}
+
+async function fetchDaily(days, step) {
+  const dates = [];
+  for (let i = days; i >= 0; i -= step) {
+    const d = new Date(); d.setDate(d.getDate() - i); dates.push(d);
+  }
+  const today = new Date();
+  if (dates[dates.length - 1].toDateString() !== today.toDateString()) dates.push(today);
+  const one = async code => {
+    const out = [];
+    for (let i = 0; i < dates.length; i += 10) {
+      const batch = await Promise.all(dates.slice(i, i + 10).map(d => fetchDay(code, d)));
+      out.push(...batch.filter(Boolean));
+    }
+    return out;
+  };
+  const [USD, EUR] = await Promise.all([one("USD"), one("EUR")]);
+  return { USD, EUR };
+}
+
 async function loadHistory() {
-  histState = "loading"; renderChart();
+  histState = "loading"; histError = ""; renderChart();
   try {
-    const [USD, EUR] = await Promise.all([fetchSeries("USD"), fetchSeries("EUR")]);
-    if (!USD.length || !EUR.length) throw new Error("No data");
-    hist = { USD, EUR }; histState = "ready";
-  } catch (e) { histState = "error"; }
+    if (histMode === "bulk") {
+      try {
+        const [USD, EUR] = await Promise.all([fetchSeries("USD"), fetchSeries("EUR")]);
+        if (!USD.length || !EUR.length) throw new Error("No data");
+        hist = { USD, EUR };
+      } catch (e) { histMode = "daily"; }
+    }
+    if (histMode === "daily") {
+      if (!dailyCache[range]) dailyCache[range] = await fetchDaily(RANGES[range], STEP[range]);
+      hist = dailyCache[range];
+      if (!hist.USD.length || !hist.EUR.length) throw new Error("No data");
+    }
+    histState = "ready";
+  } catch (e) { histState = "error"; histError = e.message || "unknown error"; }
   renderChart();
 }
 
@@ -236,7 +277,7 @@ function renderChart() {
   if (from === to) { info.textContent = "Choose two different currencies to see their history."; return; }
   if (histState === "loading") { info.textContent = "Loading history…"; return; }
   if (histState === "error") {
-    info.textContent = "Couldn’t load history. ";
+    info.textContent = `Couldn’t load history (${histError}). `;
     const b = document.createElement("button");
     b.type = "button"; b.textContent = "Try again"; b.onclick = loadHistory;
     info.appendChild(b); return;
@@ -285,7 +326,14 @@ function renderChart() {
 }
 
 document.querySelectorAll(".ranges button").forEach(b =>
-  b.addEventListener("click", () => { range = b.dataset.r; renderChart(); }));
+  b.addEventListener("click", () => {
+    range = b.dataset.r;
+    if (histMode === "daily") {
+      if (!dailyCache[range]) { loadHistory(); return; }
+      hist = dailyCache[range];
+    }
+    renderChart();
+  }));
 
 load();
 loadHistory();
